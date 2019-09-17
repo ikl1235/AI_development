@@ -11,60 +11,81 @@ import copy
 
 
 class QuadraticCost(object):
-
     @staticmethod
     def fn(a, y):
         #return the quadratic cost function of a and y
         #np.linalg.norm : return the length of vector
         return 0.5*np.linalg.norm(a-y)**2
-
     @staticmethod
     def delta(z, a, y):
         #return the error(delta)
-        return (a-y) * sigmoid_prime(z)
-
-
+        return (a-y) * 1.0/(1.0+np.exp(-z))*(1-1.0/(1.0+np.exp(-z)))
 
 class CrossEntropyCost(object):
-
     @staticmethod
     def fn(a, y):
         #return the cross-entropy cost function of a and y
         #np.nan_to_num : return 0.0 instead of wrong nan value like log0
         return np.sum(np.nan_to_num(-y*np.log(a)-(1-y)*np.log(1-a)))
-
     @staticmethod
     def delta(z, a, y):
         #return the error(delta)
         return (a-y)
 
 
+    
+class Sigmoid(object):
+    @staticmethod
+    def fn(z):
+        return 1.0/(1.0+np.exp(-z))
+    def prime(z):
+        return Sigmoid.fn(z)*(1-Sigmoid.fn(z))
 
+class Relu(object):
+    @staticmethod
+    def fn(z):
+        return z * (z > 0)
+    def prime(z):
+        return 1. * (z > 0)
+
+class Tanh(object):
+    @staticmethod
+    def fn(z):
+        return 2.0/(1.0+np.exp(-2*z))-1
+    def prime(z):
+        return 4*Tanh.fn(z)*(1-Tanh.fn(z))
+
+    
+    
 class Network(object):
 
-    def __init__(self, sizes, cost):
+    def __init__(self, sizes, cost, active):
         #example of size : [2,4,2,3] -> 4layer(input layer have 2, first hidden layer have 4, 
         #                               second hidden layer have 2, output layer have 3 node)
         self.num_layers = len(sizes)
         self.sizes = sizes
         self.cost=cost
-
-    def large_weight_initializer(self):
-        #weight initialization using gaussian random numbers(mean=0, SD=1)
-        self.biases = [np.random.randn(y, 1) for y in self.sizes[1:]]
-        self.weights = [np.random.randn(y, x) for x, y in zip(self.sizes[:-1], self.sizes[1:])]
+        self.active=active
 
     def default_weight_initializer(self):
-        #gaussian random numbers divided by square of number of input weight for that nueron
         #not include bias only weight
         self.biases = [np.random.randn(y, 1) for y in self.sizes[1:]]
+        self.weights = [np.random.randn(y, x) for x, y in zip(self.sizes[:-1], self.sizes[1:])]
+        
+    def xavier_weight_initializer(self):
+        #gaussian random numbers divided by square of number of input weight for that nueron
+        self.biases = [np.random.randn(y, 1) for y in self.sizes[1:]]
         self.weights = [np.random.randn(y, x)/np.sqrt(x) for x, y in zip(self.sizes[:-1], self.sizes[1:])]
+    
+    def he_weight_initializer(self):
+        self.biases = [np.random.randn(y, 1) for y in self.sizes[1:]]
+        self.weights = [np.random.randn(y, x)/np.sqrt(x/2.0) for x, y in zip(self.sizes[:-1], self.sizes[1:])]
         
 
     def feedforward(self, a):
         #apply activation function to w, b
         for b, w in zip(self.biases, self.weights):
-            a = sigmoid(np.dot(w, a)+b)
+            a = self.active.fn(np.dot(w, a)+b)
         return a
 
     def SGD(self, training_data, epochs, mini_batch_size, eta, lmbda = 0.0,
@@ -107,6 +128,7 @@ class Network(object):
                 accuracy = self.accuracy(copy.deepcopy(evaluation_data1))
                 evaluation_accuracy.append(accuracy)
                 print("Accuracy on evaluation data: {} / {}".format(self.accuracy(copy.deepcopy(evaluation_data1)), n_data))
+            
             print
         return evaluation_cost, evaluation_accuracy, training_cost, training_accuracy
 
@@ -119,8 +141,8 @@ class Network(object):
             delta_nabla_b, delta_nabla_w = self.backprop(x, y)
             nabla_b = [nb+dnb for nb, dnb in zip(nabla_b, delta_nabla_b)]
             nabla_w = [nw+dnw for nw, dnw in zip(nabla_w, delta_nabla_w)]
-        #self.weights = [w-(eta/len(mini_batch))*nw for w, nw in zip(self.weights, nabla_w)]
-        self.weights = [(1-eta*(lmbda/n))*w-(eta/len(mini_batch))*nw for w, nw in zip(self.weights, nabla_w)]
+        self.weights = [w-(eta/len(mini_batch))*nw for w, nw in zip(self.weights, nabla_w)]
+        #self.weights = [(1-eta*(lmbda/n))*w-(eta/len(mini_batch))*nw for w, nw in zip(self.weights, nabla_w)]
         self.biases = [b-(eta/len(mini_batch))*nb for b, nb in zip(self.biases, nabla_b)]
 
     def backprop(self, x, y):
@@ -133,7 +155,7 @@ class Network(object):
         for b, w in zip(self.biases, self.weights):
             z = np.dot(w, activation)+b
             zs.append(z)
-            activation = sigmoid(z)
+            activation = self.active.fn(z)
             activations.append(activation)
         # backward pass
         delta = (self.cost).delta(zs[-1], activations[-1], y)
@@ -141,7 +163,7 @@ class Network(object):
         nabla_w[-1] = np.dot(delta, activations[-2].transpose())
         for l in range(2, self.num_layers):
             z = zs[-l]
-            sp = sigmoid_prime(z)
+            sp = self.active.prime(z)
             delta = np.dot(self.weights[-l+1].transpose(), delta) * sp
             nabla_b[-l] = delta
             nabla_w[-l] = np.dot(delta, activations[-l-1].transpose())
@@ -200,13 +222,9 @@ def vectorized_result(j):
     e[j] = 1.0
     return e
 
-def sigmoid(z):
-    """The sigmoid function."""
-    return 1.0/(1.0+np.exp(-z))
-
-def sigmoid_prime(z):
-    """Derivative of the sigmoid function."""
-    return sigmoid(z)*(1-sigmoid(z))
-
-
-
+def softmax(x):
+    e = np.exp(x - np.max(x))  # prevent overflow
+    if e.ndim == 1:
+        return e / np.sum(e, axis=0)
+    else:  
+        return e / np.array([np.sum(e, axis=1)]).T  # ndim = 2
